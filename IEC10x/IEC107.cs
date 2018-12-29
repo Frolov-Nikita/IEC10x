@@ -1,163 +1,178 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO.Ports;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace IEC10x
 {
+    /// <summary>
+    /// Управляющие символы ASCII
+    /// https://ru.wikipedia.org/wiki/ASCII
+    /// </summary>
+    public enum AsciiControlSymbols : byte
+    {
+        /// <summary>
+        /// start of heading
+        /// начало «заголовка»
+        /// </summary>
+        SOH = 0x1,
+        /// <summary>
+        /// start of text
+        /// начало «текста»
+        /// </summary>
+        STX = 0x2,
+        /// <summary>
+        /// end of text
+        /// конец «текста»
+        /// </summary>
+        ETX = 0x3,
+        /// <summary>
+        /// end of transmission
+        /// конец передачи
+        /// </summary>
+        EOT = 0x4,
+        /// <summary>
+        /// enquire
+        /// «Прошу подтверждения!»
+        /// </summary>
+        ENQ = 0x5,
+        /// <summary>
+        /// acknowledgement
+        /// «Подтверждаю!»
+        /// </summary>
+        ACK = 0x6,
+        /// <summary>
+        /// bell
+        /// звуковой сигнал: звонок
+        /// </summary>
+        BEL = 0x7,
+        /// <summary>
+        /// backspace
+        /// возврат на один символ
+        /// </summary>
+        BS = 0x8,
+        /// <summary>
+        /// tab
+        /// горизонтальная табуляция
+        /// </summary>
+        TAB = 0x9,
+        /// <summary>
+        /// line feed
+        /// перевод строки
+        /// </summary>
+        LF = 0x0A,
+        /// <summary>
+        /// vertical tab
+        /// вертикальная табуляция
+        /// </summary>
+        VT = 0x0B,
+        /// <summary>
+        /// form feed
+        /// «прогон страницы», новая страница
+        /// </summary>
+        FF = 0x0C,
+        /// <summary>
+        /// carriage return
+        /// возврат каретки
+        /// </summary>
+        CR = 0x0D,
+        /// <summary>
+        /// shift out
+        /// «Переключиться на другую ленту (кодировку)»
+        /// </summary>
+        SO = 0x0E,
+        /// <summary>
+        /// shift in
+        /// «Переключиться на исходную ленту (кодировку)»
+        /// </summary>
+        SI = 0x0F,
+        /// <summary>
+        /// data link escape
+        /// «Экранирование канала данных»
+        /// </summary>
+        DLE = 0x10,
+        /// <summary>
+        /// device control 1
+        /// Первый символ управления устройством
+        /// </summary>
+        DC1 = 0x11,
+        /// <summary>
+        /// device control 2
+        /// Второй символ управления устройством
+        /// </summary>
+        DC2 = 0x12,
+        /// <summary>
+        /// device control 3
+        /// Третий символ управления устройством
+        /// </summary>
+        DC3 = 0x13,
+        /// <summary>
+        /// device control 4
+        /// Четвёртый символ управления устройством
+        /// </summary>
+        DC4 = 0x14,
+        /// <summary>
+        /// negative acknowledgment
+        /// «Не подтверждаю!»
+        /// </summary>
+        NAK = 0x15,
+        /// <summary>
+        /// synchronization
+        /// 
+        /// </summary>
+        SYN = 0x16,
+        /// <summary>
+        /// end of text block
+        /// конец текстового блока
+        /// </summary>
+        ETB = 0x17,
+        /// <summary>
+        /// cancel
+        /// «Отмена»
+        /// </summary>
+        CAN = 0x18,
+        /// <summary>
+        /// end of medium
+        /// «Конец носителя»
+        /// </summary>
+        EM = 0x19,
+        /// <summary>
+        /// substitute
+        /// «Подставить»
+        /// </summary>
+        SUB = 0x1A,
+        /// <summary>
+        /// escape
+        /// 
+        /// </summary>
+        ESC = 0x1B,
+        /// <summary>
+        /// delete
+        /// стереть последний символ
+        /// </summary>
+        DEL = 0x7F,
+    }
 
     public class IEC107
     {
-        /// <summary>
-        /// Управляющие символы ASCII
-        /// https://ru.wikipedia.org/wiki/ASCII
-        /// </summary>
-        public enum AsciiControlSymbols : byte
+        SerialPort port;
+
+        int startBaudRate = 300;
+
+        byte[] buffer = new byte[4096];
+
+        public string ManufacturerCode { get; private set; }
+
+        public string Identifier { get; private set; }
+
+        public IEC107(SerialPort serialPort, string deviceAddress = "", int startBaudRate = 300)
         {
-            /// <summary>
-            /// start of heading
-            /// начало «заголовка»
-            /// </summary>
-            SOH = 0x1,
-            /// <summary>
-            /// start of text
-            /// начало «текста»
-            /// </summary>
-            STX = 0x2,
-            /// <summary>
-            /// end of text
-            /// конец «текста»
-            /// </summary>
-            ETX = 0x3,
-            /// <summary>
-            /// end of transmission
-            /// конец передачи
-            /// </summary>
-            EOT = 0x4,
-            /// <summary>
-            /// enquire
-            /// «Прошу подтверждения!»
-            /// </summary>
-            ENQ = 0x5,
-            /// <summary>
-            /// acknowledgement
-            /// «Подтверждаю!»
-            /// </summary>
-            ACK = 0x6,
-            /// <summary>
-            /// bell
-            /// звуковой сигнал: звонок
-            /// </summary>
-            BEL = 0x7,
-            /// <summary>
-            /// backspace
-            /// возврат на один символ
-            /// </summary>
-            BS = 0x8,
-            /// <summary>
-            /// tab
-            /// горизонтальная табуляция
-            /// </summary>
-            TAB = 0x9,
-            /// <summary>
-            /// line feed
-            /// перевод строки
-            /// </summary>
-            LF = 0x0A,
-            /// <summary>
-            /// vertical tab
-            /// вертикальная табуляция
-            /// </summary>
-            VT = 0x0B,
-            /// <summary>
-            /// form feed
-            /// «прогон страницы», новая страница
-            /// </summary>
-            FF = 0x0C,
-            /// <summary>
-            /// carriage return
-            /// возврат каретки
-            /// </summary>
-            CR = 0x0D,
-            /// <summary>
-            /// shift out
-            /// «Переключиться на другую ленту (кодировку)»
-            /// </summary>
-            SO = 0x0E,
-            /// <summary>
-            /// shift in
-            /// «Переключиться на исходную ленту (кодировку)»
-            /// </summary>
-            SI = 0x0F,
-            /// <summary>
-            /// data link escape
-            /// «Экранирование канала данных»
-            /// </summary>
-            DLE = 0x10,
-            /// <summary>
-            /// device control 1
-            /// Первый символ управления устройством
-            /// </summary>
-            DC1 = 0x11,
-            /// <summary>
-            /// device control 2
-            /// Второй символ управления устройством
-            /// </summary>
-            DC2 = 0x12,
-            /// <summary>
-            /// device control 3
-            /// Третий символ управления устройством
-            /// </summary>
-            DC3 = 0x13,
-            /// <summary>
-            /// device control 4
-            /// Четвёртый символ управления устройством
-            /// </summary>
-            DC4 = 0x14,
-            /// <summary>
-            /// negative acknowledgment
-            /// «Не подтверждаю!»
-            /// </summary>
-            NAK = 0x15,
-            /// <summary>
-            /// synchronization
-            /// 
-            /// </summary>
-            SYN = 0x16,
-            /// <summary>
-            /// end of text block
-            /// конец текстового блока
-            /// </summary>
-            ETB = 0x17,
-            /// <summary>
-            /// cancel
-            /// «Отмена»
-            /// </summary>
-            CAN = 0x18,
-            /// <summary>
-            /// end of medium
-            /// «Конец носителя»
-            /// </summary>
-            EM = 0x19,
-            /// <summary>
-            /// substitute
-            /// «Подставить»
-            /// </summary>
-            SUB = 0x1A,
-            /// <summary>
-            /// escape
-            /// 
-            /// </summary>
-            ESC = 0x1B,
-            /// <summary>
-            /// delete
-            /// стереть последний символ
-            /// </summary>
-            DEL = 0x7F,
-
+            this.port = serialPort;
         }
-
+        
         /// <summary>
         /// символы стандартных команд
         /// </summary>
@@ -196,15 +211,7 @@ namespace IEC10x
             C,
             D
         }
-
-        /// <summary>
-        /// Скорость чтения
-        /// </summary>
-        /// <value>
-        /// The baud rate.
-        /// </value>
-        public int BaudRate { get; set; } = 9600;
-
+        
         /// <summary>
         /// максимальное время между последним байтом запроса и первым байтом ответа
         /// </summary>
@@ -213,14 +220,9 @@ namespace IEC10x
         /// </value>
         public int Tr { get; set; } = 200;
 
-        public struct Identifier
-        {
-            public int BaudRate;
-            public string ManufacturerCode;
-            public string Ident;
-            public int Tr;
-            public ProtocolMode Mode;
-        }
+        public ProtocolMode Mode { get; set; }
+
+        public DateTime LastSessUpdate { get; set; }
 
         public struct DataSet
         {
@@ -314,7 +316,7 @@ namespace IEC10x
         /// <param name="address">The address.</param>
         /// <returns>count of buffer bytes</returns>
         /// <exception cref="ArgumentOutOfRangeException">Параметр address должен быть меньше 32-х символов</exception>
-        int MakeInitQuery(ref byte[] buffer, string address = "")
+        public int MakeInit(ref byte[] buffer, string address = "")
         {
             if (address.Length > 32)
                 throw new ArgumentOutOfRangeException("Параметр address должен быть меньше 32-х символов");
@@ -344,11 +346,11 @@ namespace IEC10x
         /// <param name="prog">if set to <c>true</c> [prog].</param>
         /// <param name="baudRate">The baud rate. 0 - don`t change (Use this.BaudRate)</param>
         /// <returns></returns>
-        int MakeAck(ref byte[] buffer, bool isSecondary = false, bool prog = false, int baudRate = 0)
+        public int MakeAck(ref byte[] buffer, bool isSecondary = false, bool prog = false, int baudRate = 0)
         {
             int length = 6, i = 0;
             FitBufferLength(ref buffer, length);
-            baudRate = baudRate > 0 ? baudRate : BaudRate;
+            baudRate = baudRate > 0 ? baudRate : port.BaudRate;
             buffer[i++] = (byte)AsciiControlSymbols.ACK;
             buffer[i++] = (byte)(isSecondary ? '1' : '0');
             buffer[i++] = GetBaudRateSymbolC(baudRate);
@@ -367,7 +369,7 @@ namespace IEC10x
         /// <param name="data">The data.</param>
         /// <param name="isFullBlocks">if set to <c>true</c> [is full blocks].</param>
         /// <returns></returns>
-        public int MakeCommandQuery(ref byte[] buffer, CommandSymbbols command, char commandType = '0', string data = "", bool isFullBlocks = true)
+        public int MakeCommand(ref byte[] buffer, CommandSymbbols command, char commandType = '0', string data = "", bool isFullBlocks = true)
         {
             int length = 6 + data.Length, i = 0;
             FitBufferLength(ref buffer, length);
@@ -406,7 +408,7 @@ namespace IEC10x
         /// or
         /// Ответ неподходящего формата. Код скорости обмена.
         /// </exception>
-        public Identifier HandleIdentifierResponse(ref byte[] buffer, int length)
+        public void HandleIdentifierResponse(ref byte[] buffer, int length)
         {
             if (buffer.Length < length)
                 throw new ArgumentException("Длина буфера ответа меньше заявленной длины");
@@ -422,105 +424,102 @@ namespace IEC10x
                 (buffer[length - 1] != (byte)AsciiControlSymbols.LF))
                 throw new ArgumentException("Ответ неподходящего формата");
 
-            var identifier = new Identifier();
 
             if ((buffer[3] > (byte)'a') && (buffer[3] < (byte)'z'))
-                identifier.Tr = 20;
+                Tr = 20;
             else if ((buffer[3] > (byte)'A') && (buffer[3] < (byte)'Z'))
-                identifier.Tr = 200;
+                Tr = 200;
             else
                 throw new ArgumentException("Ответ неподходящего формата. Код производителя.");
 
-            identifier.ManufacturerCode = ASCIIEncoding.ASCII.GetString(buffer, 1, 3);
+            ManufacturerCode = ASCIIEncoding.ASCII.GetString(buffer, 1, 3);
 
-            identifier.Mode = ProtocolMode.A;
+            Mode = ProtocolMode.A;
             switch ((char)buffer[4])
             {
                 case '0':
-                    identifier.BaudRate = 300;
-                    identifier.Mode = ProtocolMode.C;
+                    port.BaudRate = 300;
+                    Mode = ProtocolMode.C;
                     break;
                 case '1':
-                    identifier.BaudRate = 600;
-                    identifier.Mode = ProtocolMode.C;
+                    port.BaudRate = 600;
+                    Mode = ProtocolMode.C;
                     break;
                 case '2':
-                    identifier.BaudRate = 1200;
-                    identifier.Mode = ProtocolMode.C;
+                    port.BaudRate = 1200;
+                    Mode = ProtocolMode.C;
                     break;
                 case '3':
-                    identifier.BaudRate = 2400;
-                    identifier.Mode = ProtocolMode.C;
+                    port.BaudRate = 2400;
+                    Mode = ProtocolMode.C;
                     break;
                 case '4':
-                    identifier.BaudRate = 4800;
-                    identifier.Mode = ProtocolMode.C;
+                    port.BaudRate = 4800;
+                    Mode = ProtocolMode.C;
                     break;
                 case '5':
-                    identifier.BaudRate = 9600;
-                    identifier.Mode = ProtocolMode.C;
+                    port.BaudRate = 9600;
+                    Mode = ProtocolMode.C;
                     break;
                 case '6':
-                    identifier.BaudRate = 19200;
-                    identifier.Mode = ProtocolMode.C;
+                    port.BaudRate = 19200;
+                    Mode = ProtocolMode.C;
                     break;
                 case '7':
-                    identifier.BaudRate = 38400;
-                    identifier.Mode = ProtocolMode.C;
+                    port.BaudRate = 38400;
+                    Mode = ProtocolMode.C;
                     break;
                 case '8':
-                    identifier.BaudRate = 76800;
-                    identifier.Mode = ProtocolMode.C;
+                    port.BaudRate = 76800;
+                    Mode = ProtocolMode.C;
                     break;
                 case '9':
-                    identifier.BaudRate = 153600;
-                    identifier.Mode = ProtocolMode.C;
+                    port.BaudRate = 153600;
+                    Mode = ProtocolMode.C;
                     break;
 
                 case 'A':
-                    identifier.BaudRate = 600;
-                    identifier.Mode = ProtocolMode.B;
+                    port.BaudRate = 600;
+                    Mode = ProtocolMode.B;
                     break;
                 case 'B':
-                    identifier.BaudRate = 1200;
-                    identifier.Mode = ProtocolMode.B;
+                    port.BaudRate = 1200;
+                    Mode = ProtocolMode.B;
                     break;
                 case 'C':
-                    identifier.BaudRate = 2400;
-                    identifier.Mode = ProtocolMode.B;
+                    port.BaudRate = 2400;
+                    Mode = ProtocolMode.B;
                     break;
                 case 'D':
-                    identifier.BaudRate = 4800;
-                    identifier.Mode = ProtocolMode.B;
+                    port.BaudRate = 4800;
+                    Mode = ProtocolMode.B;
                     break;
                 case 'E':
-                    identifier.BaudRate = 9600;
-                    identifier.Mode = ProtocolMode.B;
+                    port.BaudRate = 9600;
+                    Mode = ProtocolMode.B;
                     break;
                 case 'F':
-                    identifier.BaudRate = 19200;
-                    identifier.Mode = ProtocolMode.B;
+                    port.BaudRate = 19200;
+                    Mode = ProtocolMode.B;
                     break;
                 case 'G':
-                    identifier.BaudRate = 38400;
-                    identifier.Mode = ProtocolMode.B;
+                    port.BaudRate = 38400;
+                    Mode = ProtocolMode.B;
                     break;
                 case 'H':
-                    identifier.BaudRate = 76800;
-                    identifier.Mode = ProtocolMode.B;
+                    port.BaudRate = 76800;
+                    Mode = ProtocolMode.B;
                     break;
                 case 'I':
-                    identifier.BaudRate = 153600;
-                    identifier.Mode = ProtocolMode.B;
+                    port.BaudRate = 153600;
+                    Mode = ProtocolMode.B;
                     break;
 
                 default:
                     throw new ArgumentException("Ответ неподходящего формата. Код скорости обмена.");
             }
 
-            identifier.Ident = ASCIIEncoding.ASCII.GetString(buffer, 5, length - 5 - 2);
-
-            return identifier;
+            Identifier = ASCIIEncoding.ASCII.GetString(buffer, 5, length - 5 - 2);
         }
 
         /// <summary>
@@ -593,10 +592,188 @@ namespace IEC10x
 
             return ds;
         }
-
-        public void InitSession(string deviceAddress = "")
+        
+        public void InitSession(string address = "")
         {
+            const int minSleepMs = 2;
+            int waitMs = 1500; //максимально возможный интервал ожидания
+            int symMaxWaitMs = 12; //максимально возможный интервал ожидания следующего символа
+            int i = 0;
+
+            if (!port.IsOpen) port.Open();
+
+            // посылвем запрос (стартуем сессию)
+            int len = MakeInit(ref buffer, address);
+            port.Write(buffer, 0, len);
+
+            Thread.Sleep(21); // минимальное обязательное ожидание + 1
+            //дополнительное ожидание до максимально возможного ожидания
+            for(int c = 21; (c < waitMs) || (port.BytesToRead > 0); c += minSleepMs)
+                Thread.Sleep(minSleepMs);
+
+            if (port.BytesToRead == 0)
+                throw new Exception("Устройство не отвечает");
+
+            // ждем полной загрузки заголовка ответа
+            if (port.BytesToRead < 5)
+                Thread.Sleep((5 - port.BytesToRead) * symMaxWaitMs);
+
+            if (port.BytesToRead < 5)
+                throw new Exception("Устройство отвечает слишком медленно");
+
+            if (port.ReadByte() != (int)'/')
+                throw new Exception("Устройство отвечает не корректно");
+
+            // читаем код производителя и определяем поддерживаемую задержку между запросом и ответом
+            port.Read(buffer, 0, 3);
+            ManufacturerCode = ASCIIEncoding.ASCII.GetString(buffer, 0, 3);
+            char lmc = ManufacturerCode[2];// последний символ кода
+
+            if ((lmc> (byte)'a') && (lmc < (byte)'z'))
+                Tr = 20;
+            else if ((lmc > (byte)'A') && (lmc < (byte)'Z'))
+                Tr = 200;
+            else
+                throw new ArgumentException("Ответ неподходящего формата. Код производителя.");
+
+            // читаем скорость передачи и предполагаемый режим
+            int z = port.ReadByte();
+            int preBaudRate = port.BaudRate;
+            ProtocolMode preMode;
+            switch (z)
+            {
+                case '0':
+                    preBaudRate = 300;
+                    preMode = ProtocolMode.C;
+                    break;
+                case '1':
+                    preBaudRate = 600;
+                    preMode = ProtocolMode.C;
+                    break;
+                case '2':
+                    preBaudRate = 1200;
+                    preMode = ProtocolMode.C;
+                    break;
+                case '3':
+                    preBaudRate = 2400;
+                    preMode = ProtocolMode.C;
+                    break;
+                case '4':
+                    preBaudRate = 4800;
+                    preMode = ProtocolMode.C;
+                    break;
+                case '5':
+                    preBaudRate = 9600;
+                    preMode = ProtocolMode.C;
+                    break;
+                case '6':
+                    preBaudRate = 19200;
+                    preMode = ProtocolMode.C;
+                    break;
+                case '7':
+                    preBaudRate = 38400;
+                    preMode = ProtocolMode.C;
+                    break;
+                case '8':
+                    preBaudRate = 76800;
+                    preMode = ProtocolMode.C;
+                    break;
+                case '9':
+                    preBaudRate = 153600;
+                    preMode = ProtocolMode.C;
+                    break;
+
+                case 'A':
+                    preBaudRate = 600;
+                    preMode = ProtocolMode.B;
+                    break;
+                case 'B':
+                    preBaudRate = 1200;
+                    preMode = ProtocolMode.B;
+                    break;
+                case 'C':
+                    preBaudRate = 2400;
+                    preMode = ProtocolMode.B;
+                    break;
+                case 'D':
+                    preBaudRate = 4800;
+                    preMode = ProtocolMode.B;
+                    break;
+                case 'E':
+                    preBaudRate = 9600;
+                    preMode = ProtocolMode.B;
+                    break;
+                case 'F':
+                    preBaudRate = 19200;
+                    preMode = ProtocolMode.B;
+                    break;
+                case 'G':
+                    preBaudRate = 38400;
+                    preMode = ProtocolMode.B;
+                    break;
+                case 'H':
+                    preBaudRate = 76800;
+                    preMode = ProtocolMode.B;
+                    break;
+                case 'I':
+                    preBaudRate = 153600;
+                    preMode = ProtocolMode.B;
+                    break;
+
+                default:
+                    throw new ArgumentException("Ответ неподходящего формата. Код скорости обмена.");
+            }
+
+            // читаем идентификатор до <cr><lf>
+            len = 0;
+            byte b = 0;
+            for (int c = 0; c < symMaxWaitMs; c += minSleepMs){                
+                if (port.BytesToRead > 0)
+                {
+                    c = 0;
+                    b = (byte)port.ReadByte();
+                    buffer[len++] = b;
+                    if (b == (byte)AsciiControlSymbols.LF)
+                        break;
+                }
+                else
+                    Thread.Sleep(minSleepMs);
+            }
+            Identifier = ASCIIEncoding.ASCII.GetString(buffer, 0, len - 2);
+
+            // определяем режим A, B, или С
+            if (port.BytesToRead == 0)
+                Thread.Sleep(minSleepMs);
+            if (port.BytesToRead > 0)
+                Mode = ProtocolMode.A;
+            else
+                Mode = preMode;
+
+            // меняем скорость если попался режим B или С
+            if ((preBaudRate != port.BaudRate) && ((preMode == ProtocolMode.B) || (preMode == ProtocolMode.C)))
+            {
+                port.Close();
+                port.BaudRate = preBaudRate;
+                port.Open();
+            }
+
+            // читаем данные для режимов A или B
+            if ((preMode == ProtocolMode.A) || (preMode == ProtocolMode.B))
+            {
+
+                b = (byte)port.ReadByte();
+            }
+
+            //для режима B меняем скорость обратно
+            if ((Mode == ProtocolMode.B) && (port.BaudRate != startBaudRate))
+            {
+                port.Close();
+                port.BaudRate = startBaudRate;
+                port.Open();
+            }
 
         }
+
+
     }
 }

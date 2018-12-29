@@ -48,5 +48,11 @@
   <ItemGroup>
     <None Include="App.config" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\IEC10x\IEC10x.csproj">
+      <Project>{ff51b888-a178-470a-8001-612bdcad49bb}</Project>
+      <Name>IEC10x</Name>
+    </ProjectReference>
+  </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
