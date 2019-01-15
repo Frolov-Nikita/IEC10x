@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using IEC10x;
+//using IEC10x;
 
 namespace Experiments
 {
@@ -13,7 +13,8 @@ namespace Experiments
     {
         static void Main(string[] args)
         {
-            IEC107 iEC107 = new IEC107();
+
+            /*IEC107 iEC107 = new IEC107();
 
             byte[] qStartSess = { 0x2F, 0x3F, 0x21, 0x0D, 0x0A }; // /?!<cr><lf>
             byte[] qGetId = { 0x06, 0x30, 0x35, 0x31, 0x0D, 0x0A };// /<ACK>051<cr><lf> //перевод в режим программирования
@@ -37,7 +38,7 @@ namespace Experiments
             sp.Read(buffer, 0, len);
             Console.WriteLine($">[{len}]: {GetStr(buffer)}");
             
-            len = iEC107.MakeAck(ref buffer, false, false, 9600);
+            len = iEC107.MakeAck(ref buffer, false, '0', 9600);
             Thread.Sleep(sleepTime1);
             sp.BaseStream.Flush();
             sp.Write(buffer, 0, len);
@@ -46,7 +47,7 @@ namespace Experiments
             sp.Read(buffer, 0, len);
             Console.WriteLine($">[{len}]: {GetStr(buffer)}");
 
-            /*
+            
             // пароль
             Thread.Sleep(sleepTime1);
             sp.BaseStream.Flush();
@@ -56,44 +57,9 @@ namespace Experiments
             sp.Read(response, 0, len);
             Console.WriteLine($">[{len}]: {GetStr(response)}");
             */
-/*
-            Thread.Sleep(sleepTime1);
-            sp.BaseStream.Flush();
-            sp.Write(qU, 0, qU.Length);
-            Thread.Sleep(sleepTime2);
-            len = sp.BytesToRead;
-            sp.Read(buffer, 0, len);
-            Console.WriteLine($">[{len}]: {GetStr(buffer)}");
-            
-                        Thread.Sleep(sleepTime1);
-                        sp.BaseStream.Flush();
-                        sp.Write(qI, 0, qI.Length);
-                        Thread.Sleep(sleepTime2);
-                        len = sp.BytesToRead;
-                        sp.Read(response, 0, len);
-                        Console.WriteLine($">[{len}]: {GetStr(response)}");
-                        */
+
             Console.ReadKey();
         }
 
-        static string GetStr(byte[] buff)
-        {
-            string ret = "";
-            foreach (var b in buff)
-            {
-                if ((b == 0x00) ||
-                    (b == 0x01) ||
-                    (b == 0x02)) continue;
-
-                if ((b == 0x03) ||
-                     (b == 0x17) ||
-                     (b == 0x18) ||
-                     (b == 0x19))
-                    break;
-
-                ret += (char)b;
-            }
-            return ret;
-        }
     }
 }

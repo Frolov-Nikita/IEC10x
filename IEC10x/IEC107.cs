@@ -158,21 +158,6 @@ namespace IEC10x
 
     public class IEC107
     {
-        SerialPort port;
-
-        int startBaudRate = 300;
-
-        byte[] buffer = new byte[4096];
-
-        public string ManufacturerCode { get; private set; }
-
-        public string Identifier { get; private set; }
-
-        public IEC107(SerialPort serialPort, string deviceAddress = "", int startBaudRate = 300)
-        {
-            this.port = serialPort;
-        }
-        
         /// <summary>
         /// символы стандартных команд
         /// </summary>
@@ -211,19 +196,22 @@ namespace IEC10x
             C,
             D
         }
-        
+
+        public enum SessionState
+        {
+            Disconnected,
+            Innitialised,
+            Program, // AcessLevel1 не требует пароля
+            AcessLevel2, // Пароль уровня 2 введен
+            /* 
+             * AcessLevel3, // Нажатие на охранную кнопку Или "секретные манипуляции с данными"
+             * AcessLevel4, // Переключатель внутри корпуса устройства
+             */
+        }
+
         /// <summary>
-        /// максимальное время между последним байтом запроса и первым байтом ответа
+        /// Набор данных из строка данных из блока данных
         /// </summary>
-        /// <value>
-        /// The tr.
-        /// </value>
-        public int Tr { get; set; } = 200;
-
-        public ProtocolMode Mode { get; set; }
-
-        public DateTime LastSessUpdate { get; set; }
-
         public struct DataSet
         {
             public string Address;
@@ -231,28 +219,133 @@ namespace IEC10x
             public string Device;
         }
 
+        private SerialPort port;
+
+        private int basicBaudRate = 300;
+
+        private TimeSpan minTimeToReset = new TimeSpan(0, 1, 0);
+
+        private byte[] buffer = new byte[4096];
+
         /// <summary>
-        /// Получает символ скорости для режима "B"
+        /// Минимальное время между последним байтом запроса и первым байтом ответа
         /// </summary>
-        /// <param name="baudRate">The baud rate.</param>
-        /// <returns>символ скорости</returns>
-        byte GetBaudRateSymbolB(int baudRate)
-        {
-            switch (baudRate)
-            {
-                case 600:
-                    return (byte)'A';
-                case 1200:
-                    return (byte)'B';
-                case 2400:
-                    return (byte)'C';
-                case 4800:
-                    return (byte)'D';
-                case 9600:
-                    return (byte)'E';
-                default:
-                    return (byte)'E';
+        private int trMin = 20 / 4;
+
+        /// <summary>
+        /// Заявленное производителем время ответа
+        /// </summary>
+        private int tr = 200;
+
+        /// <summary>
+        /// Максимальное время между последним байтом запроса и первым байтом ответа
+        /// </summary>
+        private int trMax = 1500;
+
+        private DateTime lastSessUpdate;
+
+        private ProtocolMode mode;
+
+        private SessionState _sessState;
+
+        public SessionState SessState {
+            get {
+                if ((lastSessUpdate + minTimeToReset) > DateTime.Now)
+                    _sessState = SessionState.Disconnected;
+                 
+                return _sessState;
             }
+            private set { _sessState = value; }
+        }
+
+        public string BasicDeviceAddress { get; private set; }
+
+        public string ManufacturerCode { get; private set; }
+
+        public string Identifier { get; private set; }
+
+        /// <summary>
+        /// Gets or sets the data.
+        /// </summary>
+        /// <value>
+        /// The data.
+        /// </value>
+        public List<DataSet> Data { get; set; }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="IEC107"/> class.
+        /// </summary>
+        /// <param name="serialPort">The serial port.</param>
+        /// <param name="deviceAddress">The device address.</param>
+        /// <param name="startBaudRate">The start baud rate.</param>
+        public IEC107(SerialPort port, string deviceAddress = "", int basicBaudRate = 300)
+        {
+            this.port = port;
+            this.basicBaudRate = basicBaudRate;
+            this.BasicDeviceAddress = deviceAddress;
+        }
+
+        /// <summary>
+        /// Ожидает Count доступных байтов в порту для чтения в течении TrMax миллисекунд.
+        /// </summary>
+        /// <param name="count">Кол-во ожидаемых байтов</param>
+        /// <returns>True - дождались, False - время истекло</returns>
+        private bool WaitForBytes(int count)
+        {
+            int lcount = port.BytesToRead;
+            int t = 0;
+            while (lcount < count)
+            {
+                Thread.Sleep(trMin);
+                if (lcount == port.BytesToRead)
+                {
+                    t += trMin;
+                    if (t >= trMax)
+                        return false;
+                }
+                else
+                {
+                    lcount = port.BytesToRead;
+                    t = 0;
+                }
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Записывает буфер в порт
+        /// </summary>
+        /// <param name="buffer">The buffer.</param>
+        /// <param name="offset">The offset.</param>
+        /// <param name="count">The count.</param>
+        /// <exception cref="Exception">Write(..). Длина буфера меньше требуемой длины.</exception>
+        private void Write(ref byte[] buffer, int offset, int count)
+        {
+            bool isClosed = !port.IsOpen;
+            if (isClosed)
+                port.Open();
+
+            if (buffer.Length < (offset + count))
+                throw new Exception("Write(..). Длина буфера меньше требуемой длины.");
+
+            port.Write(buffer, offset, count);
+            lastSessUpdate = DateTime.Now;
+
+            if (isClosed)
+                port.Close();
+        }
+
+        /// <summary>
+        /// Sets the baud rate.
+        /// </summary>
+        /// <param name="newBaudRate">The new baud rate.</param>
+        private void SetBaudRate(int newBaudRate)
+        {
+            if (port.BaudRate == newBaudRate) return;
+            var isOpen = port.IsOpen;
+            if (isOpen) port.Close();
+            port.BaudRate = newBaudRate;
+            if (isOpen) port.Open();
         }
 
         /// <summary>
@@ -260,7 +353,7 @@ namespace IEC10x
         /// </summary>
         /// <param name="baudRate">The baud rate.</param>
         /// <returns>символ скорости</returns>
-        byte GetBaudRateSymbolC(int baudRate)
+        private byte GetBaudRateSymbolC(int baudRate)
         {
             switch (baudRate)
             {
@@ -287,7 +380,7 @@ namespace IEC10x
         /// <param name="buffer">The buffer.</param>
         /// <param name="length">The length.</param>
         /// <exception cref="ArgumentOutOfRangeException">Указанная дина меньше длины буфера.</exception>
-        byte GetBCC(ref byte[] buffer, int startindex, int length)
+        private byte GetBCC(ref byte[] buffer, int startindex, int length)
         {
             if (buffer.Length < length)
                 throw new ArgumentOutOfRangeException("Указанная дина меньше длины буфера.");
@@ -303,7 +396,7 @@ namespace IEC10x
         /// </summary>
         /// <param name="buffer">The buffer.</param>
         /// <param name="length">The length.</param>
-        void FitBufferLength(ref byte[] buffer, int length)
+        private void FitBufferLength(ref byte[] buffer, int length)
         {
             if (buffer.Length < length)
                 buffer = new byte[length];
@@ -316,7 +409,7 @@ namespace IEC10x
         /// <param name="address">The address.</param>
         /// <returns>count of buffer bytes</returns>
         /// <exception cref="ArgumentOutOfRangeException">Параметр address должен быть меньше 32-х символов</exception>
-        public int MakeInit(ref byte[] buffer, string address = "")
+        private int MakeInit(ref byte[] buffer, string address = "")
         {
             if (address.Length > 32)
                 throw new ArgumentOutOfRangeException("Параметр address должен быть меньше 32-х символов");
@@ -324,9 +417,10 @@ namespace IEC10x
             int length = 5 + address.Length;
             FitBufferLength(ref buffer, length);
 
-            buffer[0] = (byte)'/';
-            buffer[1] = (byte)'?';
-            int i = 2;
+            int i = 0;
+
+            buffer[i++] = (byte)'/';
+            buffer[i++] = (byte)'?';
 
             foreach (char c in address)
                 buffer[i++] = (byte)c;
@@ -343,10 +437,10 @@ namespace IEC10x
         /// </summary>
         /// <param name="buffer">The buffer.</param>
         /// <param name="isSecondary">Нормальная или вторичная процедура протокола</param>
-        /// <param name="prog">if set to <c>true</c> [prog].</param>
+        /// <param name="ctrlSym">'0' - данные, '1' - программирование, остальные - на усмотрение изготовителя</param>
         /// <param name="baudRate">The baud rate. 0 - don`t change (Use this.BaudRate)</param>
-        /// <returns></returns>
-        public int MakeAck(ref byte[] buffer, bool isSecondary = false, bool prog = false, int baudRate = 0)
+        /// <returns>buffer length</returns>
+        private int MakeAck(ref byte[] buffer, bool isSecondary = false, char ctrlSym = '0', int baudRate = 0)
         {
             int length = 6, i = 0;
             FitBufferLength(ref buffer, length);
@@ -354,7 +448,7 @@ namespace IEC10x
             buffer[i++] = (byte)AsciiControlSymbols.ACK;
             buffer[i++] = (byte)(isSecondary ? '1' : '0');
             buffer[i++] = GetBaudRateSymbolC(baudRate);
-            buffer[i++] = (byte)(prog ? '1' : '0');
+            buffer[i++] = (byte)ctrlSym;
             buffer[i++] = (byte)AsciiControlSymbols.CR;
             buffer[i++] = (byte)AsciiControlSymbols.LF;
             return length;
@@ -369,7 +463,7 @@ namespace IEC10x
         /// <param name="data">The data.</param>
         /// <param name="isFullBlocks">if set to <c>true</c> [is full blocks].</param>
         /// <returns></returns>
-        public int MakeCommand(ref byte[] buffer, CommandSymbbols command, char commandType = '0', string data = "", bool isFullBlocks = true)
+        private int MakeCommand(ref byte[] buffer, CommandSymbbols command, char commandType = '0', string data = "", bool isFullBlocks = true)
         {
             int length = 6 + data.Length, i = 0;
             FitBufferLength(ref buffer, length);
@@ -380,181 +474,12 @@ namespace IEC10x
             if (commandType != '0')
             {
                 buffer[i++] = (byte)AsciiControlSymbols.STX;
-
                 foreach (char c in data)
                     buffer[i++] = (byte)c;
             }
             buffer[i++] = (byte)((isFullBlocks) ? AsciiControlSymbols.ETX : AsciiControlSymbols.EOT);
-            buffer[i++] = GetBCC(ref buffer, 1, i);
+            buffer[i++] = GetBCC(ref buffer, 1, i - 2);
             return i;
-        }
-
-        /// <summary>
-        /// Определяет режим, код производ, скорость, идентификатор, тайминг по ответу на первичный запрос
-        /// </summary>
-        /// <param name="buffer">buffer of response</param>
-        /// <param name="length">length of the buffer</param>
-        /// <returns></returns>
-        /// <exception cref="ArgumentException">
-        /// Длина буфера ответа меньше заявленной длины
-        /// or
-        /// Длина ответа меньше минимального
-        /// or
-        /// Длина ответа больше максимального
-        /// or
-        /// Ответ неподходящего формата
-        /// or
-        /// Ответ неподходящего формата. Код производителя.
-        /// or
-        /// Ответ неподходящего формата. Код скорости обмена.
-        /// </exception>
-        public void HandleIdentifierResponse(ref byte[] buffer, int length)
-        {
-            if (buffer.Length < length)
-                throw new ArgumentException("Длина буфера ответа меньше заявленной длины");
-
-            if (length < 8)
-                throw new ArgumentException("Длина ответа меньше минимального");
-
-            if (length > 23) // 1 + 3 + 1 + 16max + 2
-                throw new ArgumentException("Длина ответа больше максимального");
-
-            if ((buffer[0] != '/') || // заголовок
-                (buffer[length - 2] != (byte)AsciiControlSymbols.CR) || // конец строки
-                (buffer[length - 1] != (byte)AsciiControlSymbols.LF))
-                throw new ArgumentException("Ответ неподходящего формата");
-
-
-            if ((buffer[3] > (byte)'a') && (buffer[3] < (byte)'z'))
-                Tr = 20;
-            else if ((buffer[3] > (byte)'A') && (buffer[3] < (byte)'Z'))
-                Tr = 200;
-            else
-                throw new ArgumentException("Ответ неподходящего формата. Код производителя.");
-
-            ManufacturerCode = ASCIIEncoding.ASCII.GetString(buffer, 1, 3);
-
-            Mode = ProtocolMode.A;
-            switch ((char)buffer[4])
-            {
-                case '0':
-                    port.BaudRate = 300;
-                    Mode = ProtocolMode.C;
-                    break;
-                case '1':
-                    port.BaudRate = 600;
-                    Mode = ProtocolMode.C;
-                    break;
-                case '2':
-                    port.BaudRate = 1200;
-                    Mode = ProtocolMode.C;
-                    break;
-                case '3':
-                    port.BaudRate = 2400;
-                    Mode = ProtocolMode.C;
-                    break;
-                case '4':
-                    port.BaudRate = 4800;
-                    Mode = ProtocolMode.C;
-                    break;
-                case '5':
-                    port.BaudRate = 9600;
-                    Mode = ProtocolMode.C;
-                    break;
-                case '6':
-                    port.BaudRate = 19200;
-                    Mode = ProtocolMode.C;
-                    break;
-                case '7':
-                    port.BaudRate = 38400;
-                    Mode = ProtocolMode.C;
-                    break;
-                case '8':
-                    port.BaudRate = 76800;
-                    Mode = ProtocolMode.C;
-                    break;
-                case '9':
-                    port.BaudRate = 153600;
-                    Mode = ProtocolMode.C;
-                    break;
-
-                case 'A':
-                    port.BaudRate = 600;
-                    Mode = ProtocolMode.B;
-                    break;
-                case 'B':
-                    port.BaudRate = 1200;
-                    Mode = ProtocolMode.B;
-                    break;
-                case 'C':
-                    port.BaudRate = 2400;
-                    Mode = ProtocolMode.B;
-                    break;
-                case 'D':
-                    port.BaudRate = 4800;
-                    Mode = ProtocolMode.B;
-                    break;
-                case 'E':
-                    port.BaudRate = 9600;
-                    Mode = ProtocolMode.B;
-                    break;
-                case 'F':
-                    port.BaudRate = 19200;
-                    Mode = ProtocolMode.B;
-                    break;
-                case 'G':
-                    port.BaudRate = 38400;
-                    Mode = ProtocolMode.B;
-                    break;
-                case 'H':
-                    port.BaudRate = 76800;
-                    Mode = ProtocolMode.B;
-                    break;
-                case 'I':
-                    port.BaudRate = 153600;
-                    Mode = ProtocolMode.B;
-                    break;
-
-                default:
-                    throw new ArgumentException("Ответ неподходящего формата. Код скорости обмена.");
-            }
-
-            Identifier = ASCIIEncoding.ASCII.GetString(buffer, 5, length - 5 - 2);
-        }
-
-        /// <summary>
-        /// Получает тело блока данных из информационного сообщения (ответа на ф-цию чтения в режиме программирования)
-        /// </summary>
-        /// <param name="buffer">The buffer.</param>
-        /// <param name="length">The length.</param>
-        /// <returns></returns>
-        /// <exception cref="ArgumentException">
-        /// Длина буфера ответа меньше заявленной длины
-        /// or
-        /// Длина ответа меньше минимальной длины
-        /// or
-        /// Формат ответа некорректный
-        /// or
-        /// Формат ответа некорректный
-        /// or
-        /// BCC не сходится
-        /// </exception>
-        public string GetDataBlockInfoMessage(ref byte[] buffer, int length)
-        {
-            if (buffer.Length < length)
-                throw new ArgumentException("Длина буфера ответа меньше заявленной длины");
-            if (length < 3)
-                throw new ArgumentException("Длина ответа меньше минимальной длины");
-            if (buffer[0] != (byte)AsciiControlSymbols.STX)
-                throw new ArgumentException("Формат ответа некорректный");
-            if ((buffer[length - 2] != (byte)AsciiControlSymbols.ETX) && ((buffer[length - 2] != (byte)AsciiControlSymbols.EOT)))
-                throw new ArgumentException("Формат ответа некорректный");
-
-            byte bcc = GetBCC(ref buffer, 1, length - 1 - 1);
-            if (bcc != buffer[length - 1])
-                throw new ArgumentException("BCC не сходится");
-
-            return ASCIIEncoding.ASCII.GetString(buffer, 1, length - 2 - 1);
         }
 
         /// <summary>
@@ -562,13 +487,13 @@ namespace IEC10x
         /// </summary>
         /// <param name="dataBlock">The data block.</param>
         /// <returns></returns>
-        public DataSet[] GetDataSetsFromDataBlock(string dataBlock)
+        private List<DataSet> GetDataSetsFromDataBlock(string dataBlock)
         {
             var dataStrings = dataBlock
                 .Split(new string[] { "\r\n" },
                 StringSplitOptions.RemoveEmptyEntries);
 
-            DataSet[] ds = new DataSet[dataStrings.Length];
+            List<DataSet> ds = new List<DataSet>(dataStrings.Length);
 
             for (int i = 0; i < dataStrings.Length; i++)
             {
@@ -576,63 +501,80 @@ namespace IEC10x
                 var leftBracket = s.IndexOf('(');
                 var rightBracket = s.IndexOf(')');
                 var asterisk = s.IndexOf('*');
-
-                ds[i].Address = s.Substring(0, leftBracket);
+                DataSet d = new DataSet();
+                d.Address = s.Substring(0, leftBracket);
 
                 if (asterisk == -1) // без устройства
                 {
-                    ds[i].Value = s.Substring(leftBracket + 1, rightBracket - (leftBracket + 1));
+                    d.Value = s.Substring(leftBracket + 1, rightBracket - (leftBracket + 1));
                 }
                 else
                 {
-                    ds[i].Value = s.Substring(leftBracket + 1, asterisk - (leftBracket + 1));
-                    ds[i].Device = s.Substring(asterisk + 1, rightBracket - (asterisk + 1));
+                    d.Value = s.Substring(leftBracket + 1, asterisk - (leftBracket + 1));
+                    d.Device = s.Substring(asterisk + 1, rightBracket - (asterisk + 1));
                 }
+
+                ds.Add(d);
             }
 
             return ds;
         }
-        
-        public void InitSession(string address = "")
-        {
-            const int minSleepMs = 2;
-            int waitMs = 1500; //максимально возможный интервал ожидания
-            int symMaxWaitMs = 12; //максимально возможный интервал ожидания следующего символа
-            int i = 0;
 
+        /// <summary>
+        /// Initializes the session.
+        /// </summary>
+        /// <param name="address">The address.</param>
+        /// <exception cref="Exception">
+        /// Устройство отвечает не корректно
+        /// or
+        /// Устройство не отвечает
+        /// or
+        /// Устройство отвечает слишком медленно
+        /// or
+        /// Не удалось получить идентификатор.
+        /// or
+        /// or
+        /// Не удалось получить данные при идентификации.
+        /// or
+        /// Не удалось получить данные при идентификации.
+        /// or
+        /// </exception>
+        /// <exception cref="ArgumentException">
+        /// Ответ неподходящего формата. Код производителя.
+        /// or
+        /// Ответ неподходящего формата. Код скорости обмена.
+        /// </exception>
+        private void InitSession(string address = "")
+        {
             if (!port.IsOpen) port.Open();
 
-            // посылвем запрос (стартуем сессию)
+            // посылаем запрос (стартуем сессию)
             int len = MakeInit(ref buffer, address);
             port.Write(buffer, 0, len);
 
-            Thread.Sleep(21); // минимальное обязательное ожидание + 1
-            //дополнительное ожидание до максимально возможного ожидания
-            for(int c = 21; (c < waitMs) || (port.BytesToRead > 0); c += minSleepMs)
-                Thread.Sleep(minSleepMs);
-
-            if (port.BytesToRead == 0)
-                throw new Exception("Устройство не отвечает");
-
-            // ждем полной загрузки заголовка ответа
-            if (port.BytesToRead < 5)
-                Thread.Sleep((5 - port.BytesToRead) * symMaxWaitMs);
-
-            if (port.BytesToRead < 5)
-                throw new Exception("Устройство отвечает слишком медленно");
-
-            if (port.ReadByte() != (int)'/')
-                throw new Exception("Устройство отвечает не корректно");
+            // ждем начала ответа
+            if (WaitForBytes(5))
+            {
+                if (port.ReadByte() != (int)'/')
+                    throw new Exception("Устройство отвечает не корректно");
+            }
+            else
+            {
+                if (port.BytesToRead == 0)
+                    throw new Exception("Устройство не отвечает");
+                else
+                    throw new Exception("Устройство отвечает слишком медленно");
+            }
 
             // читаем код производителя и определяем поддерживаемую задержку между запросом и ответом
             port.Read(buffer, 0, 3);
             ManufacturerCode = ASCIIEncoding.ASCII.GetString(buffer, 0, 3);
             char lmc = ManufacturerCode[2];// последний символ кода
 
-            if ((lmc> (byte)'a') && (lmc < (byte)'z'))
-                Tr = 20;
+            if ((lmc > (byte)'a') && (lmc < (byte)'z'))
+                tr = 20;
             else if ((lmc > (byte)'A') && (lmc < (byte)'Z'))
-                Tr = 200;
+                tr = 200;
             else
                 throw new ArgumentException("Ответ неподходящего формата. Код производителя.");
 
@@ -727,53 +669,173 @@ namespace IEC10x
             // читаем идентификатор до <cr><lf>
             len = 0;
             byte b = 0;
-            for (int c = 0; c < symMaxWaitMs; c += minSleepMs){                
-                if (port.BytesToRead > 0)
+            while (b != (byte)AsciiControlSymbols.LF)
+            {
+                if (WaitForBytes(1))
                 {
-                    c = 0;
                     b = (byte)port.ReadByte();
                     buffer[len++] = b;
-                    if (b == (byte)AsciiControlSymbols.LF)
-                        break;
                 }
                 else
-                    Thread.Sleep(minSleepMs);
+                    throw new Exception("Не удалось получить идентификатор.");
             }
             Identifier = ASCIIEncoding.ASCII.GetString(buffer, 0, len - 2);
 
             // определяем режим A, B, или С
-            if (port.BytesToRead == 0)
-                Thread.Sleep(minSleepMs);
-            if (port.BytesToRead > 0)
-                Mode = ProtocolMode.A;
+            if (WaitForBytes(1))
+                mode = ProtocolMode.A;
             else
-                Mode = preMode;
+                mode = preMode;
 
             // меняем скорость если попался режим B или С
-            if ((preBaudRate != port.BaudRate) && ((preMode == ProtocolMode.B) || (preMode == ProtocolMode.C)))
+            if ((mode == ProtocolMode.B) || (mode == ProtocolMode.C))
+                SetBaudRate(preBaudRate);
+
+            // посылаем команду на чтения данных для режима С
+            if (mode == ProtocolMode.C)
             {
-                port.Close();
-                port.BaudRate = preBaudRate;
-                port.Open();
+                len = MakeAck(ref buffer, false, '0');
+                port.Write(buffer, 0, len);
             }
 
             // читаем данные для режимов A или B
-            if ((preMode == ProtocolMode.A) || (preMode == ProtocolMode.B))
+            if ((mode == ProtocolMode.A) || (mode == ProtocolMode.B))
             {
-
+                WaitForBytes(7);// STX MinData ! CR LF ETX BCC
                 b = (byte)port.ReadByte();
+                if (b != (byte)AsciiControlSymbols.STX)
+                    throw new Exception($"Wrong start symbol for mode {preMode}.");
+
+                len = 0;
+                while (b != (byte)AsciiControlSymbols.ETX)
+                {
+                    if (WaitForBytes(1))
+                    {
+                        b = (byte)port.ReadByte();
+                        buffer[len++] = b;
+                    }
+                    else
+                        throw new Exception("Не удалось получить данные при идентификации.");
+                }
+
+                if (WaitForBytes(1))// Контрольная сумма
+                    b = (byte)port.ReadByte();
+                else
+                    throw new Exception("Не удалось получить данные при идентификации.");
+
+                byte bcc = GetBCC(ref buffer, 1, len - 2); // без STX и ETX
+                if (b != bcc)
+                    throw new Exception($"Контрольная сумма не сходится {b}!={bcc}.");
+
+                string dataBlockStr = ASCIIEncoding.ASCII.GetString(buffer, 0, len - 5);
+                Data = GetDataSetsFromDataBlock(dataBlockStr);
             }
 
             //для режима B меняем скорость обратно
-            if ((Mode == ProtocolMode.B) && (port.BaudRate != startBaudRate))
+            if (mode == ProtocolMode.B)
+                SetBaudRate(basicBaudRate);
+
+            lastSessUpdate = DateTime.Now;
+        }//InitSession
+
+        /// <summary>
+        /// Читает из port и разбирает информационное сообщение. В том числе и многостраничные.
+        /// </summary>
+        /// <returns></returns>
+        /// <exception cref="Exception">
+        /// Ошибка разбора InfoMessage. Нет данных.
+        /// or
+        /// Ошибка разбора InfoMessage. Нет STX.
+        /// or
+        /// Ошибка разбора InfoMessage. Нет достигнут ETX.
+        /// or
+        /// Ошибка разбора InfoMessage. Нет BCC.
+        /// or
+        /// </exception>
+        private List<DataSet> ReadInfoMessage()
+        {
+            if (!WaitForBytes(2))
+                throw new Exception("Ошибка разбора InfoMessage. Нет данных.");
+
+            byte b = (byte)port.ReadByte();
+            if (b != (byte)AsciiControlSymbols.STX)
+                throw new Exception("Ошибка разбора InfoMessage. Нет STX.");
+
+            int len = 0;
+            while ((b != (byte)AsciiControlSymbols.ETX) || (b != (byte)AsciiControlSymbols.EOT))
+                if (WaitForBytes(1))
+                {
+                    b = (byte)port.ReadByte();
+                    buffer[len++] = b;
+                }
+                else
+                    throw new Exception("Ошибка разбора InfoMessage. Нет достигнут ETX.");
+
+            if (WaitForBytes(1))
+                b = (byte)port.ReadByte();
+            else
+                throw new Exception("Ошибка разбора InfoMessage. Нет BCC.");
+
+            byte bcc = GetBCC(ref buffer, 1, len - 2);
+            if (b != bcc)
+                throw new Exception($"Ошибка разбора InfoMessage. Не совпадает BCC: {bcc} != {b} .");
+
+            var str = ASCIIEncoding.ASCII.GetString(buffer, 1, len - 1 - 1);
+
+            List<DataSet> ds = GetDataSetsFromDataBlock(str);
+
+            if (buffer[len - 1] == (byte)AsciiControlSymbols.EOT)
             {
-                port.Close();
-                port.BaudRate = startBaudRate;
-                port.Open();
+                port.Write(new byte[] { (byte)AsciiControlSymbols.ACK }, 0, 1);
+                List<DataSet> dsPartal = ReadInfoMessage();
+                ds.AddRange(dsPartal);
             }
 
+            return ds;
         }
 
+        /// <summary>
+        /// Перевод устройства в режим программирования
+        /// </summary>
+        /// <param name="password">The password.</param>
+        /// <exception cref="Exception">
+        /// </exception>
+        private void ToProgramMode(string password)
+        {
+            int len;
+            if (mode == ProtocolMode.C)
+            {
+                //для режима С нужен сперва запрос
+                len = MakeAck(ref buffer, false, '1');
+                port.Write(buffer, 0, len);
 
+                if (!WaitForBytes(3))// SOH P 0
+                    throw new Exception($"Переход в режим программирования. Нет запроса пароля.");
+                var dss = ReadInfoMessage();
+                if ((dss?.Count ?? 0) == 0)
+                    throw new Exception($"Переход в режим программирования. Не корректный запрос пароля.");
+                var sn = dss[0].Value;
+            }
+
+            // ввод пароля
+            len = MakeCommand(ref buffer, CommandSymbbols.Password, '1', $"({password})");
+            port.Write(buffer, 0, len);
+
+            if (!WaitForBytes(1))// ACK || NAK || SOH B 0 ETX BCC
+                throw new Exception($"Переход в режим программирования. Нет запроса пароля.");
+
+            buffer[0] = (byte)port.ReadByte();
+            if (buffer[0] != (byte)AsciiControlSymbols.ACK)
+                throw new Exception($"Переход в режим программирования. Пароль не подходит.");
+            // теперь устройство в режиме программирования
+        }
+
+        public void Bye()
+        {
+            int len = MakeCommand(ref buffer, CommandSymbbols.Bye);
+            Write(ref buffer, 0, len);
+
+            SessState = SessionState.Disconnected;
+        }
     }
 }

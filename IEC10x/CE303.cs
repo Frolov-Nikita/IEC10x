@@ -6,8 +6,8 @@ using System.Threading.Tasks;
 
 namespace IEC10x
 {
-    public class CE303 : IEC107
-    {
+    //public class CE303 : IEC107
+    //{
 
-    }
+    //}
 }
