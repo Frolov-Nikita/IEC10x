@@ -42,6 +42,8 @@
   <ItemGroup>
     <Compile Include="CE303.cs" />
     <Compile Include="IEC107.cs" />
+    <Compile Include="IEC107ModC.cs" />
+    <Compile Include="IEC107Port.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />

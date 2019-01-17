@@ -186,6 +186,18 @@ namespace IEC10x
         }
 
         /// <summary>
+        /// Метод кодирования данных для команды
+        /// </summary>
+        public enum CommandDataEncoding : byte
+        {
+            Reserved = (byte)'0',
+            Ascii = (byte)'1',
+            Formated = (byte)'2',
+            AsciiIncomplete = (byte)'3',
+            FormatedIncomplete = (byte)'4',
+        } 
+
+        /// <summary>
         /// Режимы протокола
         /// </summary>
         public enum ProtocolMode
@@ -197,12 +209,14 @@ namespace IEC10x
             D
         }
 
-        public enum SessionState
+        /// <summary>
+        /// Состояние текущего подключения
+        /// </summary>
+        public enum SessionState:int
         {
-            Disconnected,
-            Innitialised,
-            Program, // AcessLevel1 не требует пароля
-            AcessLevel2, // Пароль уровня 2 введен
+            Disconnected = 0,
+            Innitialised = 1,
+            AcessLevel2 = 2, // Пароль уровня 2 введен
             /* 
              * AcessLevel3, // Нажатие на охранную кнопку Или "секретные манипуляции с данными"
              * AcessLevel4, // Переключатель внутри корпуса устройства
@@ -246,7 +260,7 @@ namespace IEC10x
 
         private ProtocolMode mode;
 
-        private SessionState _sessState;
+        private SessionState _sessState = SessionState.Disconnected;
 
         public SessionState SessState {
             get {
@@ -257,6 +271,8 @@ namespace IEC10x
             }
             private set { _sessState = value; }
         }
+
+        public string Password { get; set; }
 
         public string BasicDeviceAddress { get; private set; }
 
@@ -278,11 +294,13 @@ namespace IEC10x
         /// <param name="serialPort">The serial port.</param>
         /// <param name="deviceAddress">The device address.</param>
         /// <param name="startBaudRate">The start baud rate.</param>
-        public IEC107(SerialPort port, string deviceAddress = "", int basicBaudRate = 300)
+        public IEC107(SerialPort port, string deviceAddress = "")
         {
             this.port = port;
-            this.basicBaudRate = basicBaudRate;
+            if (port.IsOpen) port.Close();            
+            this.basicBaudRate = port.BaudRate;
             this.BasicDeviceAddress = deviceAddress;
+            port.Open();
         }
 
         /// <summary>
@@ -312,6 +330,13 @@ namespace IEC10x
             return true;
         }
 
+        private byte ReadByte()
+        {
+            if (!port.IsOpen) port.Open();
+            WaitForBytes(1);
+            return (byte)port.ReadByte();
+        }
+
         /// <summary>
         /// Записывает буфер в порт
         /// </summary>
@@ -321,18 +346,11 @@ namespace IEC10x
         /// <exception cref="Exception">Write(..). Длина буфера меньше требуемой длины.</exception>
         private void Write(ref byte[] buffer, int offset, int count)
         {
-            bool isClosed = !port.IsOpen;
-            if (isClosed)
-                port.Open();
-
             if (buffer.Length < (offset + count))
                 throw new Exception("Write(..). Длина буфера меньше требуемой длины.");
 
             port.Write(buffer, offset, count);
             lastSessUpdate = DateTime.Now;
-
-            if (isClosed)
-                port.Close();
         }
 
         /// <summary>
@@ -388,7 +406,7 @@ namespace IEC10x
             byte sum = 0;
             for (int i = startindex; i < length; i++)
                 sum += buffer[i];
-            return sum;
+            return (byte)(sum & 0x7F);
         }
 
         /// <summary>
@@ -698,10 +716,9 @@ namespace IEC10x
                 port.Write(buffer, 0, len);
             }
 
-            // читаем данные для режимов A или B
-            if ((mode == ProtocolMode.A) || (mode == ProtocolMode.B))
+            // читаем данные для режимов A или B или C
+            if (WaitForBytes(7))// STX MinData ! CR LF ETX BCC
             {
-                WaitForBytes(7);// STX MinData ! CR LF ETX BCC
                 b = (byte)port.ReadByte();
                 if (b != (byte)AsciiControlSymbols.STX)
                     throw new Exception($"Wrong start symbol for mode {preMode}.");
@@ -723,19 +740,22 @@ namespace IEC10x
                 else
                     throw new Exception("Не удалось получить данные при идентификации.");
 
-                byte bcc = GetBCC(ref buffer, 1, len - 2); // без STX и ETX
+                byte bcc = GetBCC(ref buffer, 0, len); // Без STX и ETX
                 if (b != bcc)
                     throw new Exception($"Контрольная сумма не сходится {b}!={bcc}.");
 
-                string dataBlockStr = ASCIIEncoding.ASCII.GetString(buffer, 0, len - 5);
+                string dataBlockStr = ASCIIEncoding.ASCII.GetString(buffer, 0, len - 5); // Без STX ! CR LF ETX ( BCC вне буфера ).
                 Data = GetDataSetsFromDataBlock(dataBlockStr);
             }
+            else
+                throw new Exception("Нет тарифных данных.");
 
             //для режима B меняем скорость обратно
             if (mode == ProtocolMode.B)
                 SetBaudRate(basicBaudRate);
 
             lastSessUpdate = DateTime.Now;
+            SessState = SessionState.Innitialised;
         }//InitSession
 
         /// <summary>
@@ -752,8 +772,10 @@ namespace IEC10x
         /// Ошибка разбора InfoMessage. Нет BCC.
         /// or
         /// </exception>
-        private List<DataSet> ReadInfoMessage()
-        {
+        private List<DataSet> ReadProgInfoMessage()
+        {   // STX (D..D) ETX||EOT BCC
+            // (D..D) блок данных == [строки данных] разделение по CR LF
+            // строка данных == набор данных: "адрес ( данные * устройство )"
             if (!WaitForBytes(2))
                 throw new Exception("Ошибка разбора InfoMessage. Нет данных.");
 
@@ -787,7 +809,7 @@ namespace IEC10x
             if (buffer[len - 1] == (byte)AsciiControlSymbols.EOT)
             {
                 port.Write(new byte[] { (byte)AsciiControlSymbols.ACK }, 0, 1);
-                List<DataSet> dsPartal = ReadInfoMessage();
+                List<DataSet> dsPartal = ReadProgInfoMessage();
                 ds.AddRange(dsPartal);
             }
 
@@ -797,28 +819,28 @@ namespace IEC10x
         /// <summary>
         /// Перевод устройства в режим программирования
         /// </summary>
-        /// <param name="password">The password.</param>
+        /// <param name="Зassword">The password.</param>
         /// <exception cref="Exception">
         /// </exception>
-        private void ToProgramMode(string password)
+        private void ToProgram()
         {
             int len;
             if (mode == ProtocolMode.C)
             {
-                //для режима С нужен сперва запрос
+                // Для режима С нужен сперва запрос
                 len = MakeAck(ref buffer, false, '1');
                 port.Write(buffer, 0, len);
 
                 if (!WaitForBytes(3))// SOH P 0
                     throw new Exception($"Переход в режим программирования. Нет запроса пароля.");
-                var dss = ReadInfoMessage();
+                var dss = ReadProgInfoMessage();
                 if ((dss?.Count ?? 0) == 0)
                     throw new Exception($"Переход в режим программирования. Не корректный запрос пароля.");
                 var sn = dss[0].Value;
             }
-
-            // ввод пароля
-            len = MakeCommand(ref buffer, CommandSymbbols.Password, '1', $"({password})");
+            
+            // Ввод пароля
+            len = MakeCommand(ref buffer, CommandSymbbols.Password, '1', $"({Password})");
             port.Write(buffer, 0, len);
 
             if (!WaitForBytes(1))// ACK || NAK || SOH B 0 ETX BCC
@@ -827,15 +849,116 @@ namespace IEC10x
             buffer[0] = (byte)port.ReadByte();
             if (buffer[0] != (byte)AsciiControlSymbols.ACK)
                 throw new Exception($"Переход в режим программирования. Пароль не подходит.");
-            // теперь устройство в режиме программирования
+
+            // Теперь устройство в Авторизовано
+            SessState = SessionState.AcessLevel2;
         }
 
+        /// <summary>
+        /// Запись строки в буфер
+        /// </summary>
+        /// <param name="buffer">The buffer.</param>
+        /// <param name="offset">The offset.</param>
+        /// <param name="str">The string.</param>
+        /// <returns></returns>
+        protected virtual int StringToBuffer(ref byte[] buffer, int offset, string str)
+        {
+            int i = offset;
+            foreach(char c in str) {
+                buffer[i++] = (byte)c;
+            }
+            return i - offset;
+        }
+
+        /// <summary>
+        /// Запись набора данных в буфер
+        /// </summary>
+        /// <param name="buffer">The buffer.</param>
+        /// <param name="offset">The offset.</param>
+        /// <param name="dataSet">The data set.</param>
+        /// <returns></returns>
+        protected virtual int MakeDataSetAscii(ref byte[] buffer, int offset, DataSet dataSet) {
+            int i = offset;
+            i += StringToBuffer(ref buffer, i, dataSet.Address);
+            if (!string.IsNullOrEmpty(dataSet.Value)) {
+                buffer[i++] = (byte)'(';
+                i += StringToBuffer(ref buffer, i, dataSet.Value);
+                if (!string.IsNullOrEmpty(dataSet.Device)) {
+                    buffer[i++] = (byte)'*';
+                    i += StringToBuffer(ref buffer, i, dataSet.Device);
+                }
+                buffer[i++] = (byte)')';
+            }
+            return i - offset;
+        }
+
+        /// <summary>
+        /// Сбор буфера для информационного сообщения
+        /// </summary>
+        /// <param name="buffer">The buffer.</param>
+        /// <param name="offset">The offset.</param>
+        /// <param name="dataSet">The data set.</param>
+        /// <param name="cde">The cde.</param>
+        /// <returns>кол-во байтов записаных в буфер</returns>
+        /// <exception cref="NotImplementedException"></exception>
+        protected virtual int MakeProgInfoMessageRequest(ref byte[] buffer, int offset,  DataSet dataSet, CommandDataEncoding cde)
+        { // STX DataSet ETX||EOT BCC
+            int i = offset;
+            buffer[i++] = (byte)AsciiControlSymbols.STX;
+
+            switch (cde) {
+                case CommandDataEncoding.Ascii:
+                    i += MakeDataSetAscii(ref buffer, i, dataSet);
+                    buffer[i++] = (byte)AsciiControlSymbols.ETX;
+                    break;                   
+                case CommandDataEncoding.AsciiIncomplete:
+                case CommandDataEncoding.Reserved:
+                case CommandDataEncoding.Formated:
+                case CommandDataEncoding.FormatedIncomplete:                    
+                default:
+                    throw new NotImplementedException($"Тип кодирования {(char)cde} не реализован.");
+            }
+
+            int len = i - offset;
+            byte bcc = GetBCC(ref buffer, offset + 1, len - 2);
+            buffer[i++] = bcc;
+            return i - offset;
+        }
+
+        /// <summary>
+        /// Команда чтения
+        /// </summary>
+        /// <param name="address">The data.</param>
+        /// <param name="data">The data.</param>
+        /// <param name="cde">The Command Data Encoding</param>
+        /// <returns></returns>
+        public List<DataSet> CmdR(DataSet dataSet, CommandDataEncoding cde = CommandDataEncoding.Ascii)
+        {
+            if (SessState == SessionState.Disconnected)
+                InitSession();
+
+            if (SessState != SessionState.AcessLevel2)
+                ToProgram();
+
+            int i = 0;
+            buffer[i++] = (byte)AsciiControlSymbols.SOH;
+            buffer[i++] = (byte)CommandSymbbols.Read;
+            buffer[i++] = (byte)cde;
+            i += MakeProgInfoMessageRequest(ref buffer, i, dataSet, cde);
+            Write(ref buffer, 0, i);
+            return ReadProgInfoMessage();
+        }
+
+        /// <summary>
+        /// Закрываем сессию.
+        /// </summary>
         public void Bye()
         {
             int len = MakeCommand(ref buffer, CommandSymbbols.Bye);
             Write(ref buffer, 0, len);
 
             SessState = SessionState.Disconnected;
+            port.Close();
         }
     }
 }
