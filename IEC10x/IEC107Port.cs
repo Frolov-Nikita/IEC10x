@@ -8,6 +8,15 @@ using System.Threading.Tasks;
 
 namespace IEC10x
 {
+    /// <summary>
+    /// Делегат для события отправки данных 
+    /// </summary>
+    /// <param name="isSendToDevice">if set to <c>true</c> [is send to device].</param>
+    /// <param name="message">The message.</param>
+    public delegate void IEC107PortComm(IEC107PortCommDirection direction, byte[] buffer, int offset, int length);
+
+    public enum IEC107PortCommDirection { Read, Write }
+
     public class IEC107Port
     {
         private SerialPort port;
@@ -21,8 +30,12 @@ namespace IEC10x
         /// <summary>
         /// Заявленное производителем время ответа
         /// </summary>
-        private int trMax = 200;
-                
+        private int trMax = 1500 + 50;
+
+        public bool IsOpen { get => port.IsOpen;}
+
+        public int BaudRate => port.BaudRate;
+
         /// <summary>
         /// Initializes a new instance of the <see cref="IEC107Port"/> class.
         /// </summary>
@@ -33,6 +46,9 @@ namespace IEC10x
             this.baseBaudRate = port.BaudRate;
         }
 
+        private void InvokeOnCommunicate(IEC107PortCommDirection direction, byte[] buffer, int offset, int length) =>
+            OnCommunicate?.Invoke(direction, buffer, offset, length);
+        
         /// <summary>
         /// Установка новой BaudRate с отключение и подключением.
         /// </summary>
@@ -87,7 +103,7 @@ namespace IEC10x
             }
             return true;
         }
-                
+
         /// <summary>
         /// Читает в буфер до выполнения условия.
         /// </summary>
@@ -97,12 +113,12 @@ namespace IEC10x
         /// <returns></returns>
         public int Read(ref byte[] buffer, int offset, Predicate<byte> eor)
         {
-
             int i = offset;
             byte b;
             var bLen = buffer.LongLength - offset;
-            do {
-                if(bLen-- == 0)
+            do
+            {
+                if (bLen-- == 0)
                     throw new Exception("Read(,,p) end of buffer");
                 if (!WaitBytes(1))
                     throw new Exception("Read(,,p) timeout");
@@ -110,7 +126,11 @@ namespace IEC10x
                 buffer[i++] = b;
             } while (!eor(b));
 
-            return i - offset;
+            int length = i - offset;
+
+            InvokeOnCommunicate(IEC107PortCommDirection.Read, buffer, offset, length);
+
+            return length;
         }
 
         /// <summary>
@@ -126,7 +146,9 @@ namespace IEC10x
                 throw new Exception("Read(,,l) buffer length less then read length");
             if (!WaitBytes(length))
                 throw new Exception("Read(,,l) timeout");
-            return port.Read(buffer, offset, port.BytesToRead);
+
+            InvokeOnCommunicate(IEC107PortCommDirection.Read, buffer, offset, length);
+            return port.Read(buffer, offset, length);
         }
 
         /// <summary>
@@ -136,9 +158,13 @@ namespace IEC10x
         /// <exception cref="Exception">Read() timeout</exception>
         public byte ReadByte()
         {
-            if (WaitBytes(1))
+            if (!WaitBytes(1))
                 throw new Exception("Read() timeout");
-            return (byte)port.ReadByte();
+
+            var b = (byte)port.ReadByte();
+
+            InvokeOnCommunicate(IEC107PortCommDirection.Read, new byte[] {b }, 0, 1);
+            return b;
         }
 
         /// <summary>
@@ -146,14 +172,15 @@ namespace IEC10x
         /// </summary>
         /// <param name="buffer">The buffer.</param>
         /// <param name="offset">The offset.</param>
-        /// <param name="count">The count.</param>
+        /// <param name="length">The count.</param>
         /// <exception cref="Exception">Write(..). Длина буфера меньше требуемой длины.</exception>
-        public void Write(ref byte[] buffer, int offset, int count)
+        public void Write(ref byte[] buffer, int offset, int length)
         {
-            if (buffer.Length < (offset + count))
+            if (buffer.Length < (offset + length))
                 throw new Exception("Write(..). Длина буфера меньше требуемой длины.");
 
-            port.Write(buffer, offset, count);
+            port.Write(buffer, offset, length);
+            InvokeOnCommunicate(IEC107PortCommDirection.Write, buffer, offset, length);
         }
 
         /// <summary>
@@ -163,6 +190,22 @@ namespace IEC10x
         public void WriteByte(byte b)
         {
             port.Write(new byte[] { b }, 0, 1);
+            InvokeOnCommunicate(IEC107PortCommDirection.Write, new byte[] { b}, 0, 1);
         }
+
+        public void Open()
+        {
+            if (port.IsOpen)
+                return;
+            port.Open();
+        }
+
+        public void Close()
+        {
+            if (port.IsOpen)
+                port.Close();
+        }
+
+        public event IEC107PortComm OnCommunicate;
     }
 }
